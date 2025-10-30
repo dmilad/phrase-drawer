@@ -1,0 +1,32 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# Generated outputs (optional - comment out if you want to commit generated images)
+output/*.png
+output/*.jpg
+output/*.jpeg
+
+# Input images (optional - comment out if you want to commit input images)
+# input/*.png
+# input/*.jpg
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
