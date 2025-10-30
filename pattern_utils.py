@@ -260,6 +260,174 @@ def generate_square_outline_positions(center_x, center_y, side_length, points_pe
     return positions
 
 
+def create_brightness_distribution(image_path, chunk_size=5):
+    """
+    Create a brightness distribution from a grayscale image by dividing it into chunks.
+
+    Args:
+        image_path: Path to the image file
+        chunk_size: Size of chunks to divide the image into (e.g., 5 means 5x5 pixel chunks)
+
+    Returns:
+        Tuple of (weights, chunk_centers) where:
+            - weights: numpy array of normalized brightness values (sum to 1.0)
+            - chunk_centers: list of (x, y) tuples representing chunk center positions
+    """
+    # Load image and convert to grayscale
+    img = Image.open(image_path).convert('L')
+    img_array = np.array(img)
+
+    height, width = img_array.shape
+
+    # Calculate number of chunks in each dimension
+    num_chunks_y = height // chunk_size
+    num_chunks_x = width // chunk_size
+
+    weights = []
+    chunk_centers = []
+
+    # Iterate through chunks
+    for i in range(num_chunks_y):
+        for j in range(num_chunks_x):
+            # Get chunk boundaries
+            y_start = i * chunk_size
+            y_end = (i + 1) * chunk_size
+            x_start = j * chunk_size
+            x_end = (j + 1) * chunk_size
+
+            # Extract chunk and calculate average brightness
+            chunk = img_array[y_start:y_end, x_start:x_end]
+            avg_brightness = np.mean(chunk)
+
+            # Store brightness as weight
+            weights.append(avg_brightness)
+
+            # Store chunk center position (in original image coordinates)
+            center_x = (x_start + x_end) / 2
+            center_y = (y_start + y_end) / 2
+            chunk_centers.append((center_x, center_y))
+
+    # Convert to numpy array and normalize to create probability distribution
+    weights = np.array(weights)
+    weights = weights / np.sum(weights)
+
+    return weights, chunk_centers
+
+
+def sample_positions_from_distribution(weights, chunk_centers, canvas_width, canvas_height,
+                                       border, num_samples, add_jitter=False,
+                                       invert_distribution=False):
+    """
+    Sample positions from a brightness distribution, mapping them to canvas coordinates.
+
+    Args:
+        weights: numpy array of normalized probability weights
+        chunk_centers: list of (x, y) tuples in source image coordinates
+        canvas_width: Width of the target canvas
+        canvas_height: Height of the target canvas
+        border: Border size (positions will be constrained to inner area)
+        num_samples: Number of positions to sample
+        add_jitter: If True, add random noise to positions (default: False)
+        invert_distribution: If True, invert weights so darker areas have higher probability
+
+    Returns:
+        List of (x, y) tuples in canvas coordinates
+    """
+    # Invert distribution if requested (darker = more likely)
+    if invert_distribution:
+        max_weight = np.max(weights)
+        sampling_weights = max_weight - weights
+        sampling_weights = sampling_weights / np.sum(sampling_weights)
+    else:
+        sampling_weights = weights
+
+    # Calculate inner canvas area
+    inner_width = canvas_width - 2 * border
+    inner_height = canvas_height - 2 * border
+
+    # Get source image dimensions from chunk centers
+    if chunk_centers:
+        max_x = max(x for x, y in chunk_centers)
+        max_y = max(y for x, y in chunk_centers)
+        min_x = min(x for x, y in chunk_centers)
+        min_y = min(y for x, y in chunk_centers)
+        src_width = max_x - min_x
+        src_height = max_y - min_y
+    else:
+        return []
+
+    # Sample indices from the distribution
+    sampled_indices = np.random.choice(len(chunk_centers), size=num_samples, p=sampling_weights)
+
+    positions = []
+    for idx in sampled_indices:
+        src_x, src_y = chunk_centers[idx]
+
+        # Map from source image coordinates to canvas coordinates
+        # Normalize to [0, 1] range first
+        norm_x = (src_x - min_x) / src_width if src_width > 0 else 0.5
+        norm_y = (src_y - min_y) / src_height if src_height > 0 else 0.5
+
+        # Map to inner canvas area
+        canvas_x = border + norm_x * inner_width
+        canvas_y = border + norm_y * inner_height
+
+        # Add jitter if requested
+        if add_jitter:
+            jitter_amount = min(inner_width, inner_height) * 0.01  # 1% of smaller dimension
+            canvas_x += np.random.uniform(-jitter_amount, jitter_amount)
+            canvas_y += np.random.uniform(-jitter_amount, jitter_amount)
+
+            # Clamp to inner bounds
+            canvas_x = max(border, min(canvas_width - border, canvas_x))
+            canvas_y = max(border, min(canvas_height - border, canvas_y))
+
+        positions.append((int(canvas_x), int(canvas_y)))
+
+    return positions
+
+
+def generate_sampled_pattern(image_path, canvas_width=6400, canvas_height=4800,
+                             border=400, chunk_size=5, iterations=50,
+                             samples_per_iteration=10, add_jitter=False,
+                             invert_distribution=False):
+    """
+    Generate a pattern by iteratively sampling from a brightness distribution.
+
+    This function creates a probability distribution based on the brightness values
+    of an image divided into chunks, then samples positions from this distribution
+    multiple times to create a density pattern.
+
+    Args:
+        image_path: Path to the source image for creating the distribution
+        canvas_width: Width of the canvas (default: 6400)
+        canvas_height: Height of the canvas (default: 4800)
+        border: Border size around canvas (default: 400)
+        chunk_size: Size of chunks for brightness sampling (default: 5)
+        iterations: Number of sampling iterations (default: 50)
+        samples_per_iteration: Number of samples per iteration (default: 10)
+        add_jitter: If True, add random noise to sampled positions (default: False)
+        invert_distribution: If True, darker areas get higher probability (default: False)
+
+    Returns:
+        List of (x, y) tuples representing all sampled positions
+    """
+    # Create brightness distribution
+    weights, chunk_centers = create_brightness_distribution(image_path, chunk_size)
+
+    all_positions = []
+
+    # Perform iterative sampling
+    for _ in range(iterations):
+        positions = sample_positions_from_distribution(
+            weights, chunk_centers, canvas_width, canvas_height, border,
+            samples_per_iteration, add_jitter, invert_distribution
+        )
+        all_positions.extend(positions)
+
+    return all_positions
+
+
 # ============================================================================
 # Image Overlay Function
 # ============================================================================
